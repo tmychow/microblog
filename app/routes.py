@@ -7,6 +7,11 @@ import sqlalchemy as sa
 from app.models import User, Post
 from urllib.parse import urlsplit
 
+from sentence_transformers import SentenceTransformer
+model = SentenceTransformer('all-MiniLM-L6-v2')
+
+import json
+
 @app.route('/', methods=['GET', 'POST'])
 @app.route('/index', methods=['GET', 'POST'])
 @login_required
@@ -14,6 +19,21 @@ def index():
     form = PostForm()
     if form.validate_on_submit():
         post = Post(body=form.post.data, author=current_user)
+        post_embedding = model.encode(form.post.data)
+        try:
+            with open('embeddings.json', 'r+') as file:
+                if file.read() == '':
+                    file_data = []
+                else:
+                    file.seek(0)
+                    file_data = json.load(file)
+                file_data.append({"body": form.post.data, "embedding": post_embedding.tolist()})
+                file.seek(0)
+                json.dump(file_data, file)
+                file.truncate()
+        except FileNotFoundError:
+            with open('embeddings.json', 'w') as file:
+                json.dump([{"body": form.post.data, "embedding": post_embedding.tolist()}], file)
         db.session.add(post)
         db.session.commit()
         flash('Your post is now live!')
@@ -135,6 +155,9 @@ def explore():
     next_url = url_for('explore', page=posts.next_num) if posts.has_next else None
     return render_template('index.html', title='Explore', posts=posts.items, prev_url=prev_url, next_url=next_url)
 
+import numpy as np
+from sklearn.metrics.pairwise import cosine_similarity
+
 @app.route('/search', methods=['GET', 'POST'])
 @login_required
 def search():
@@ -144,15 +167,39 @@ def search():
         return redirect(url_for('search', search=search_term))
     elif request.method == 'GET':
         search_term = request.args.get('search')
-        page = request.args.get('page', 1, type=int)
-        query = (
-            sa.select(Post)
-            .where(Post.body.ilike(f'%{search_term}%'))
-            .order_by(Post.timestamp.desc())
-        )
-        posts = db.paginate(query, page=page, per_page=app.config['POSTS_PER_PAGE'], error_out=False)
-        prev_url = url_for('search', search=search_term, page=posts.prev_num) if posts.has_prev else None
-        next_url = url_for('search', search=search_term, page=posts.next_num) if posts.has_next else None
-        return render_template('search.html', title='Search', form=form, posts=posts.items, prev_url=prev_url, next_url=next_url)
+        if search_term:
+            search_embedding = model.encode(search_term)
+            with open('embeddings.json', 'r') as file:
+                embeddings = json.load(file)
+            similar_messages = []
+            for item in embeddings:
+                similarity = cosine_similarity([search_embedding], [np.array(item['embedding'])])
+                similar_messages.append((item['body'], similarity[0][0]))
+            similar_messages.sort(key=lambda x: x[1], reverse=True)
+            similar_messages = similar_messages[:3]
+            similar_messages_body = [message[0] for message in similar_messages]
+
+            page = request.args.get('page', 1, type=int)
+            query = (
+                sa.select(Post)
+                .where(Post.body.in_(similar_messages_body))
+                .order_by(Post.timestamp.desc())
+            )
+            posts = db.paginate(query, page=page, per_page=app.config['POSTS_PER_PAGE'], error_out=False)
+            prev_url = url_for('search', search=search_term, page=posts.prev_num) if posts.has_prev else None
+            next_url = url_for('search', search=search_term, page=posts.next_num) if posts.has_next else None
+            return render_template('search.html', title='Search', form=form, posts=posts.items, prev_url=prev_url, next_url=next_url)
+        else:
+            search_term = request.args.get('search')
+            page = request.args.get('page', 1, type=int)
+            query = (
+                sa.select(Post)
+                .where(Post.body.ilike(f'%{search_term}%'))
+                .order_by(Post.timestamp.desc())
+            )
+            posts = db.paginate(query, page=page, per_page=app.config['POSTS_PER_PAGE'], error_out=False)
+            prev_url = url_for('search', search=search_term, page=posts.prev_num) if posts.has_prev else None
+            next_url = url_for('search', search=search_term, page=posts.next_num) if posts.has_next else None
+            return render_template('search.html', title='Search', form=form, posts=posts.items, prev_url=prev_url, next_url=next_url)
     else:
         return render_template('search.html', title='Search', form=form, posts=[])

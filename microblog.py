@@ -1,5 +1,6 @@
 from app import app, db
 import sqlalchemy as sa
+from sqlalchemy import event
 import sqlalchemy.orm as so
 from app.models import User, Post
 

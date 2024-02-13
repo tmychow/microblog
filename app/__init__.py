@@ -10,15 +10,8 @@ app.config.from_object(Config)
 login = LoginManager(app)
 login.login_view = 'login'
 db = SQLAlchemy(app)
+
 migrate = Migrate(app, db)
 moment = Moment(app)
 
 from app import routes, models, errors
-
-# from app import app, db
-# from app.models import User, Post
-# import sqlalchemy as sa
-# app.app_context().push()
-# db.create_all()
-# db.session.add(u)
-# db.session.commit()
